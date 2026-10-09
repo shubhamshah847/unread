@@ -1,12 +1,11 @@
-import { useEffect, useState } from "react";
-import { MODELS, hasWebGPU, loadEngine, unloadEngine, extract } from "./ai/webllm.js";
+import { useState } from "react";
 import { getErrorMessage } from "./ai/output.js";
-import { analyze, parse } from "./features/triage/logic.js";
+import { parse } from "./features/triage/logic.js";
 
-const fmt = (date, hasTime = false) => date ? date.toLocaleString([], hasTime
-  ? { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }
-  : { month: "short", day: "numeric", year: "numeric" }) : "";
-const esc = (text) => text.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+const MODELS = [
+  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 1B · recommended, lighter (~1 GB)" },
+  { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 3B · larger (~2.5 GB)" },
+];
 const SAMPLE_CHAT = [
   "Ava: Shubham, can you send the project draft by tomorrow?",
   "Shubham: Sure, I'll finish it tonight.",
@@ -14,57 +13,12 @@ const SAMPLE_CHAT = [
   "Maya: Shubham, can you review the deployment checklist when you have a moment?",
 ].join("\n");
 
-function Highlight({ text, me }) {
-  if (!me) return text;
-  return text.split(new RegExp(`(${esc(me)})`, "ig")).map((part, index) =>
-    part.toLowerCase() === me.toLowerCase() ? <mark key={index}>{part}</mark> : part
-  );
-}
-
-function Item({ item, me }) {
+function ResultList({ title, items, render }) {
+  if (!items?.length) return null;
   return (
-    <div className={`item ${item.pri}`}>
-      <div className="meta">
-        <b className={`pr ${item.pri}`}>{item.pri}</b> {item.who}
-        {item.due && <span className={`chip ${item.status}`}>
-          {item.status === "overdue" ? "Overdue · " : "Due "}{fmt(item.due, item.dueHasTime)}
-        </span>}
-        {item.status === "overdue" && !item.due && <span className="chip overdue">Overdue</span>}
-        {item.taskOwner && <span className="chip active">Owner: {item.taskOwner}{item.taskForMe ? " (you)" : ""}</span>}
-      </div>
-      <div><Highlight text={item.text} me={me} /></div>
-      {item.tags.length > 0 && <div className="meta">{item.tags.join(", ")}</div>}
-      <details className="item-explanation">
-        <summary>Why this?</summary>
-        {item.signals?.length
-          ? <ul>{item.signals.map((signal) => <li key={signal.label}>{signal.label} (+{signal.points})</li>)}</ul>
-          : <p>No triage signals matched this message.</p>}
-      </details>
-    </div>
-  );
-}
-
-function InboxCard({ title, items, empty, me, variant = "" }) {
-  return (
-    <section className={`inbox-card ${variant}`}>
-      <header className="inbox-card-head">
-        <h3>{title}</h3>
-        <span className="count-badge">{items.length}</span>
-      </header>
-      {items.length ? items.map((item) => (
-        <article className="inbox-entry" key={`${title}-${item.i}`}>
-          <div className="inbox-entry-meta">
-            <span>{item.who}</span>
-            {item.sentAt && <time dateTime={item.sentAt.toISOString()}>{fmt(item.sentAt, true)}</time>}
-            {item.due && <span className={`chip ${item.status}`}>{item.status === "overdue" ? "Overdue · " : "Due · "}{fmt(item.due, item.dueHasTime)}</span>}
-            {item.deadlineLabel && <span className="chip soon">Deadline · {item.deadlineLabel}</span>}
-            {item.dateLabel && <span className="chip">Date · {item.dateLabel}</span>}
-            {(item.taskOwner || item.ownerLabel) && <span className="chip active">Owner · {item.taskOwner || item.ownerLabel}{item.taskForMe ? " (you)" : ""}</span>}
-          </div>
-          <p><Highlight text={item.text} me={me} /></p>
-          {item.sourceLabel && <p className="inbox-source">Evidence · {item.sourceLabel}</p>}
-        </article>
-      )) : <p className="empty">{empty}</p>}
+    <section className="inbox-card">
+      <header className="inbox-card-head"><h3>{title}</h3><span className="count-badge">{items.length}</span></header>
+      <ul className="result-list">{items.map((item, index) => <li key={`${title}-${index}`}>{render(item)}</li>)}</ul>
     </section>
   );
 }
@@ -72,47 +26,14 @@ function InboxCard({ title, items, empty, me, variant = "" }) {
 export default function App() {
   const [chat, setChat] = useState("");
   const [me, setMe] = useState("");
-  const [res, setRes] = useState(null);
+  const [messages, setMessages] = useState(null);
   const [ai, setAi] = useState(null);
   const [model, setModel] = useState(MODELS[0].id);
   const [engine, setEngine] = useState(null);
   const [status, setStatus] = useState("");
   const [prog, setProg] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [hosts, setHosts] = useState([]);
-  const [online, setOnline] = useState(typeof navigator !== "undefined" ? navigator.onLine : true);
-  const gpu = hasWebGPU();
-
-  useEffect(() => {
-    const updateOnline = () => setOnline(navigator.onLine);
-    addEventListener("online", updateOnline);
-    addEventListener("offline", updateOnline);
-    return () => {
-      removeEventListener("online", updateOnline);
-      removeEventListener("offline", updateOnline);
-    };
-  }, []);
-
-  useEffect(() => {
-    setHosts([...new Set(performance.getEntriesByType("resource").map((resource) => {
-      try {
-        return new URL(resource.name).host;
-      } catch {
-        return "";
-      }
-    }).filter((host) => host && host !== location.host))]);
-  }, [status, busy]);
-
-  const run = (text = chat, name = me) => {
-    const messages = parse(text);
-    if (!messages.length) {
-      setStatus("Paste a chat first. Each line should look like Name: message.");
-      return;
-    }
-    setRes(analyze(messages, name.trim()));
-    setAi(null);
-    setStatus("");
-  };
+  const gpu = typeof navigator !== "undefined" && "gpu" in navigator;
 
   const chooseModel = async (nextModel) => {
     setModel(nextModel);
@@ -120,190 +41,107 @@ export default function App() {
     setEngine(null);
     if (previousEngine) {
       try {
+        const { unloadEngine } = await import("./ai/webllm.js");
         await unloadEngine(previousEngine.instance);
-        setStatus("Previous local model released. The selected model will load when you request a summary.");
       } catch {
         setStatus("The previous model could not be released cleanly. Reload the page if the new model cannot start.");
       }
     }
+    setAi(null);
   };
 
-  const runAI = async () => {
-    if (!res) return;
-    setBusy(true);
+  const runSummary = async () => {
+    const parsedMessages = parse(chat);
+    if (!parsedMessages.length) {
+      setStatus("Paste a chat first. Each message should include a sender and message text.");
+      return;
+    }
+    if (!gpu) {
+      setStatus("This browser does not support WebGPU, which is required to run the local model.");
+      return;
+    }
+
+    setMessages(parsedMessages);
     setAi(null);
+    setBusy(true);
     setProg(0);
     setStatus(engine
-      ? "Preparing your chat for local summarization…"
-      : "Starting the local model. First use may download model files and take several minutes.");
+      ? "Preparing chat for local summarization…"
+      : "Starting the local model. The first run may download model files.");
     try {
+      const { extract, loadEngine } = await import("./ai/webllm.js");
       let activeEngine = engine?.modelId === model ? engine.instance : null;
       if (!activeEngine) {
         activeEngine = await loadEngine(model, (progress) => {
           setProg(progress.progress || 0);
-          setStatus(progress.text || "Downloading and initializing the local model…");
+          setStatus(progress.text || "Loading the local model…");
         });
         setEngine({ modelId: model, instance: activeEngine });
       }
-      setStatus("Model ready. Sending chat text to the on-device model for summarization…");
-      const result = await extract(activeEngine, res, me.trim(), setStatus);
+      const result = await extract(activeEngine, parsedMessages, me.trim(), setStatus);
       setAi(result);
-      setStatus(result ? "Done. This summary was made on your device." : "The model returned unusable output. Showing rule-based results.");
+      setStatus(result ? "Summary ready. Your chat stayed on this device." : "The model could not create a summary. Please try again.");
     } catch (error) {
-      const reason = getErrorMessage(error);
-      setStatus(`Local AI couldn't finish (${reason}). Your rule-based results are still available. Try the lighter model or reload and retry.`);
+      setStatus(`Local summary failed: ${getErrorMessage(error)}. Try the lighter model or retry.`);
     } finally {
       setBusy(false);
     }
   };
-
-  const by = (filter) => (res ? res.filter(filter).sort((a, b) => b.score - a.score) : []);
-  const overdue = by((item) => item.status === "overdue");
-  const soon = by((item) => item.status === "soon");
-  const replies = by((item) => item.reply);
-  const decisions = by((item) => item.tags.includes("Decision"));
-  const tasks = by((item) => item.tags.includes("Task"));
-  const top = by((item) => item.score >= 4).slice(0, 3);
-  const deadlines = by((item) => Boolean(item.due));
-  const progressUpdates = by((item) => /\b(?:pushed|deployed|completed|finished|fixed|working on|in progress|tested|released|submitted|shared|updated|blocked|waiting)\b/i.test(item.text));
-  const inboxDecisions = [
-    ...decisions,
-    ...(ai?.decisions || []).map((decision, index) => ({
-      i: `ai-decision-${index}`,
-      who: decision.by || "Local AI extraction",
-      text: decision.decision || "",
-      dateLabel: decision.date || "",
-      sourceLabel: decision.source || "",
-    })),
-  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
-  const inboxDeadlines = [
-    ...deadlines,
-    ...(ai?.deadlines || []).map((deadline, index) => ({
-      i: `ai-deadline-${index}`,
-      who: "Local AI extraction",
-      text: deadline.item,
-      ownerLabel: deadline.owner || "Unassigned",
-      deadlineLabel: deadline.date || "Date unclear",
-      sourceLabel: deadline.source || "",
-    })),
-  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
-  const inboxTasks = [
-    ...tasks,
-    ...(ai?.tasks || []).map((task, index) => ({
-      i: `ai-task-${index}`,
-      who: "Local AI suggestion",
-      text: task.task,
-      ownerLabel: task.owner || "Unassigned",
-      deadlineLabel: task.deadline || "",
-      taskForMe: task.for_me,
-      sourceLabel: task.source || "",
-    })),
-  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
-  const inboxUpdates = [
-    ...progressUpdates,
-    ...(ai?.updates || []).map((update, index) => ({
-      i: `ai-update-${index}`,
-      who: update.person || "Local AI extraction",
-      text: update.update,
-      dateLabel: update.date,
-    })),
-  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
 
   return (
     <div className="app-shell">
       <header className="topbar">
         <div className="brand-wrap">
           <div className="brand-mark">U</div>
-          <div><p className="eyebrow">local-first AI</p><h1>Unread</h1></div>
+          <div><p className="eyebrow">private · on-device</p><h1>Unread</h1></div>
         </div>
-        <div className="status-pill"><span className={online ? "dot online" : "dot offline"}></span>{online ? "online" : "offline"}</div>
+        <span className={`chip ${gpu ? "active" : "overdue"}`}>{gpu ? "WebGPU available" : "WebGPU unavailable"}</span>
       </header>
 
       <main className="container">
         <section className="panel hero">
-          <div><p className="eyebrow">What did I miss?</p><h2>Catch up in seconds without sending your chats anywhere.</h2></div>
-          <p className="hero-copy">Unread turns messy WhatsApp exports into urgent, actionable priorities using on-device WebLLM and fast local rules.</p>
+          <div><p className="eyebrow">A faster way to catch up</p><h2>Get the gist of your chat, privately.</h2></div>
+          <p className="hero-copy">Paste a WhatsApp chat and summarize it with a small AI model running right in your browser. Your messages are never uploaded.</p>
         </section>
-
 
         <section className="panel composer">
           <label className="field-label" htmlFor="chat-input">Paste your chat</label>
-          <textarea id="chat-input" value={chat} onChange={(event) => setChat(event.target.value)} placeholder="Paste your WhatsApp chat export here. Your chat is processed locally on this device." disabled={busy} />
-          <p className="privacy-note">Rule-based analysis runs in this browser. Optional model files may be downloaded; your pasted chat is not sent to an app server.</p>
+          <textarea id="chat-input" value={chat} onChange={(event) => setChat(event.target.value)} placeholder="Paste your WhatsApp chat export here…" disabled={busy} />
+          <p className="privacy-note">Your chat is processed locally. The model may need to download once; chat content stays on this device.</p>
           <div className="toolbar">
             <div className="name-field">
-              <label className="field-label" htmlFor="your-name">Your name (used to find messages addressed to you)</label>
+              <label className="field-label" htmlFor="your-name">Your name (optional)</label>
               <input id="your-name" value={me} onChange={(event) => setMe(event.target.value)} placeholder="e.g. Shubham" disabled={busy} />
             </div>
-            <button onClick={() => run()} disabled={busy}>Analyze my chat</button>
-            <button className="secondary" onClick={() => { setChat(SAMPLE_CHAT); setMe("Shubham"); run(SAMPLE_CHAT, "Shubham"); }} disabled={busy}>Try sample chat</button>
+            {gpu && <select aria-label="Local model" value={model} onChange={(event) => chooseModel(event.target.value)} disabled={busy}>
+              {MODELS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>}
+            <button onClick={runSummary} disabled={busy || !gpu}>{busy ? "Summarizing locally…" : "Summarize locally"}</button>
+            <button className="secondary" onClick={() => { setChat(SAMPLE_CHAT); setMe("Shubham"); setMessages(null); setAi(null); setStatus(""); }} disabled={busy}>Try sample</button>
           </div>
         </section>
 
         {status && <div className="status-banner" role="status" aria-live="polite">{status}</div>}
 
-        {res && (
-          <>
-            <section className="panel summary-panel">
-              <div className="summary-header"><h3>Catch-up card</h3><span className="chip neutral">{res.length} messages</span></div>
-              <div className="stats-grid">
-                <div><strong>{overdue.length}</strong><span>overdue</span></div>
-                <div><strong>{soon.length}</strong><span>due soon</span></div>
-                <div><strong>{replies.length}</strong><span>need reply</span></div>
-                <div><strong>{decisions.length}</strong><span>decisions</span></div>
-              </div>
-              {top.length ? top.map((item) => <Item key={item.i} item={item} me={me} />) : <p className="empty">Nothing urgent. Safe to skim.</p>}
-            </section>
+        {busy && <section className="panel ai-progress-panel" aria-label="Summary progress">
+          <div className="progress">{prog > 0 && prog < 1
+            ? <i style={{ width: `${Math.round(prog * 100)}%` }} />
+            : <i className="indeterminate" />}</div>
+          <span>{prog > 0 && prog < 1 ? `Loading model · ${Math.round(prog * 100)}%` : "The local model is summarizing your chat…"}</span>
+        </section>}
 
-            <section className="panel ai-panel">
-              <div className="summary-header"><h3>Local model summary</h3>{gpu && <span className="chip active">WebLLM ready</span>}</div>
-              {gpu ? (
-                <div className="toolbar compact">
-                  <select value={model} onChange={(event) => chooseModel(event.target.value)} disabled={busy}>
-                    {MODELS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-                  </select>
-                  <button onClick={runAI} disabled={busy}>{busy ? "Summarizing on this device…" : "Summarize locally"}</button>
-                </div>
-              ) : <p className="empty">This browser has no WebGPU, so the model can't run here. The rule-based triage still works.</p>}
-
-              {busy && (
-                <div className="ai-progress" aria-hidden="true">
-                  <div className="progress">
-                    {prog > 0 && prog < 1
-                      ? <i style={{ width: `${Math.round(prog * 100)}%` }} />
-                      : <i className="indeterminate" />}
-                  </div>
-                  <span>{prog > 0 && prog < 1 ? `Loading model · ${Math.round(prog * 100)}%` : "Local model is processing…"}</span>
-                </div>
-              )}
-              
-              {ai && (
-                <div className="model-summary-box">
-                  <span className="eyebrow">Local AI · extracted fields</span>
-                  <div className="model-field-counts">
-                    <div><strong>{ai.updates?.length || 0}</strong><span>Updates</span></div>
-                    <div><strong>{ai.decisions?.length || 0}</strong><span>Decisions</span></div>
-                    <div><strong>{ai.deadlines?.length || 0}</strong><span>Dates</span></div>
-                    <div><strong>{ai.tasks?.length || 0}</strong><span>Tasks</span></div>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <section className="inbox-results" aria-label="Chat highlights">
-              <header className="inbox-results-head">
-                <div><p className="eyebrow">Your chat, organized</p><h2>Inbox highlights</h2></div>
-                <p>Sorted into decisions, dates, actions, replies, and updates.</p>
-              </header>
-              <div className="inbox-grid">
-                <InboxCard title="Decisions" items={inboxDecisions} me={me} empty="No clear decisions found." variant="decision-card" />
-                <InboxCard title="Dates & deadlines" items={inboxDeadlines} me={me} empty="No dates or deadlines found." variant="deadline-card" />
-                <InboxCard title="Tasks & owners" items={inboxTasks} me={me} empty="No clear assigned tasks found." variant="task-card" />
-                <InboxCard title="Needs your reply" items={replies} me={me} empty="No unanswered questions addressed to you." variant="reply-card" />
-                <InboxCard title="Progress & updates" items={inboxUpdates} me={me} empty="No explicit progress updates found." variant="updates-card" />
-              </div>
-            </section>
-          </>
+        {ai && (
+          <section className="panel summary-panel">
+            <div className="summary-header"><h2>Your chat summary</h2><span className="chip neutral">{messages?.length || 0} messages</span></div>
+            {ai.summary && <p className="summary-text">{ai.summary}</p>}
+            <div className="inbox-grid">
+              <ResultList title="Key updates" items={ai.updates} render={(item) => <><strong>{item.person || "Update"}</strong>: {item.update}{item.date && <span className="result-detail"> · {item.date}</span>}</>} />
+              <ResultList title="Decisions" items={ai.decisions} render={(item) => <>{item.decision}{item.by && <span className="result-detail"> · {item.by}</span>}</>} />
+              <ResultList title="Tasks" items={ai.tasks} render={(item) => <>{item.task}<span className="result-detail">{[item.owner && `Owner: ${item.owner}`, item.deadline && `Due: ${item.deadline}`].filter(Boolean).join(" · ")}</span></>} />
+              <ResultList title="Dates & deadlines" items={ai.deadlines} render={(item) => <>{item.item}<span className="result-detail">{[item.owner && `Owner: ${item.owner}`, item.date].filter(Boolean).join(" · ")}</span></>} />
+            </div>
+            {!ai.summary && !ai.updates?.length && !ai.decisions?.length && !ai.tasks?.length && !ai.deadlines?.length && <p className="empty">No key details were found in this chat.</p>}
+          </section>
         )}
       </main>
     </div>

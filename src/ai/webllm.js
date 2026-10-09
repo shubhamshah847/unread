@@ -25,8 +25,9 @@ export async function unloadEngine(engine) {
 }
 
 // Ask for labeled fields so the UI can render an inbox, not a paragraph.
-const SYS = (me) => `Extract a structured inbox from this chat for "${me || "the user"}". Reply ONLY with valid JSON matching this shape: {"updates":[{"person":"","update":"","date":""}],"decisions":[{"decision":"","by":"","date":"","source":""}],"deadlines":[{"item":"","owner":"","date":"","source":""}],"tasks":[{"task":"","owner":"","deadline":"","for_me":false,"source":""}]}. Rules: use only explicit chat evidence; never invent a date, owner, task, or decision. Keep each value short and factual. Put explicit progress/status statements (for example pushed, tested, blocked, completed, waiting) in updates. Use deadlines only when the chat gives a time/date; preserve its wording if ambiguous. Use empty strings for unknown text fields and empty arrays when no evidence exists. Assign for_me true only when the owner clearly matches "${me || "the user"}". The chat may use English, Romanized Nepali, Hindi, or mixed language; output the extracted values in concise English.`;
-const MODEL_CHUNK_CHARS = 2200;
+const SYS = (me) => `Summarize this chat for "${me || "the user"}". Reply ONLY with valid JSON matching this shape: {"summary":"one or two concise sentences","updates":[{"person":"","update":"","date":""}],"decisions":[{"decision":"","by":"","date":"","source":""}],"deadlines":[{"item":"","owner":"","date":"","source":""}],"tasks":[{"task":"","owner":"","deadline":"","for_me":false,"source":""}]}. Use only explicit chat evidence; never invent dates, owners, tasks, or decisions. Keep values concise. Use empty strings for unknown fields and empty arrays when no evidence exists. Assign for_me true only when the owner clearly matches "${me || "the user"}". The chat may use English, Romanized Nepali, Hindi, or mixed language; write the summary and extracted values in concise English.`;
+const MODEL_CHUNK_CHARS = 4000;
+const MIN_RETRY_CHUNK_CHARS = 700;
 
 // Use small input parts so structured JSON output is less likely to hit the model token limit.
 function chunks(items, max = MODEL_CHUNK_CHARS) {
@@ -42,18 +43,6 @@ function chunks(items, max = MODEL_CHUNK_CHARS) {
   }
   if (cur) out.push(cur);
   return out;
-}
-
-// Filters out noise: Keeps only high-score messages and their immediate preceding context
-function pick(res) {
-  const keep = new Set();
-  res.forEach((x) => {
-    if (x.score > 0 || /\b(?:pushed|deployed|completed|finished|fixed|working on|in progress|tested|released|submitted|shared|updated|blocked|waiting)\b/i.test(x.text)) {
-      keep.add(x.i);
-      if (x.i > 0) keep.add(x.i - 1);
-    }
-  });
-  return res.filter((x) => keep.has(x.i));
 }
 
 // Retry malformed or truncated output once, keeping JSON mode enabled.
@@ -131,9 +120,8 @@ async function ask(engine, system, user, onProgress, onStatus) {
 export async function extract(engine, res, me, onStep) {
   const parts = [];
 
-  // 1. Filter and chunk the chat
-  const totalChars = res.reduce((n, x) => n + x.who.length + x.text.length + 3, 0);
-  const chatChunks = chunks(totalChars <= 5000 ? res : pick(res));
+  // 1. Chunk the parsed chat directly; no triage pass is required.
+  const chatChunks = chunks(res);
   if (!chatChunks.length) {
     return { summary: "Nothing important found in this chat.", tasks: [], decisions: [] };
   }
@@ -141,13 +129,43 @@ export async function extract(engine, res, me, onStep) {
   // 2. Extract tasks and sub-summaries per chunk
   for (let index = 0; index < chatChunks.length; index++) {
     onStep?.(`Reading part ${index + 1} of ${chatChunks.length}...`);
-    const result = await ask(
-      engine,
-      SYS(me),
-      chatChunks[index],
-      (length) => onStep?.(`Generating part ${index + 1} of ${chatChunks.length} · ${length} characters received locally`),
-      onStep
-    );
+    const extractChunk = async (chunk, depth = 0) => {
+      try {
+        return await ask(
+          engine,
+          SYS(me),
+          chunk,
+          (length) => onStep?.(`Generating part ${index + 1} of ${chatChunks.length} · ${length} characters received locally`),
+          onStep
+        );
+      } catch (error) {
+        const wasTruncated = /cut off at its generation limit/i.test(getErrorMessage(error));
+        if (!wasTruncated || chunk.length <= MIN_RETRY_CHUNK_CHARS || depth >= 4) throw error;
+
+        const midpoint = Math.floor(chunk.length / 2);
+        const nextNewline = chunk.indexOf("\n", midpoint);
+        const previousNewline = chunk.lastIndexOf("\n", midpoint);
+        const splitAt = nextNewline >= 0 && nextNewline < chunk.length - 1
+          ? nextNewline
+          : previousNewline;
+        const boundary = splitAt > 0 ? splitAt : midpoint;
+        const first = chunk.slice(0, boundary).trim();
+        const second = chunk.slice(boundary).trim();
+        if (!first || !second) throw error;
+
+        onStep?.("The response reached its generation limit; retrying this section as smaller pieces…");
+        const firstResult = await extractChunk(first, depth + 1);
+        const secondResult = await extractChunk(second, depth + 1);
+        return {
+          summary: [firstResult?.summary, secondResult?.summary].filter(Boolean).join(" "),
+          tasks: [...(firstResult?.tasks || []), ...(secondResult?.tasks || [])],
+          decisions: [...(firstResult?.decisions || []), ...(secondResult?.decisions || [])],
+          updates: [...(firstResult?.updates || []), ...(secondResult?.updates || [])],
+          deadlines: [...(firstResult?.deadlines || []), ...(secondResult?.deadlines || [])],
+        };
+      }
+    };
+    const result = await extractChunk(chatChunks[index]);
     if (result) parts.push(result);
   }
   if (!parts.length) return null;
@@ -168,6 +186,7 @@ export async function extract(engine, res, me, onStep) {
 
   // 5. Return the final structured object
   return {
+    summary: [...new Set(parts.map((part) => part.summary).filter(Boolean))].join(" ").slice(0, 2000),
     tasks,
     decisions: [...new Set(parts.flatMap((part) => part.decisions || []))],
     updates: parts.flatMap((part) => part.updates || []),

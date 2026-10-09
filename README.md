@@ -1,16 +1,16 @@
 ﻿# Unread
 
-Unread is a privacy-first, local-first chat triage web app designed for people who want a fast answer to: "What did I miss?"
+Unread is a privacy-first, local-first chat summarizer designed for people who want a fast answer to: "What did I miss?"
 
-Instead of uploading chat data to a server, the app lets the user paste a WhatsApp export, identify themselves by name, and instantly surface likely tasks, deadlines, decisions, and questions that are directed at them. The experience stays lightweight, transparent, and browser-local.
+Instead of uploading chat data to a server, the app lets the user paste a WhatsApp export and summarizes it with a small on-device language model. The experience stays lightweight, transparent, and browser-local.
 
 ## What it does
 
 - Parses WhatsApp chat exports from standard text logs and common timestamp formats
-- Cleans invisible characters and noise before analysis
-- Detects likely tasks, owners, due dates, decisions, and questions addressed to the user
-- Uses local rule-based triage as the reliable first pass
-- Optionally runs a local WebLLM summary for a second opinion without sending chat data anywhere
+- Cleans invisible characters and parses WhatsApp messages locally
+- Summarizes key updates, decisions, tasks, and deadlines with WebLLM
+- Runs model inference in a Web Worker to keep the interface responsive
+- Processes chat text on-device without sending it to an app server
 
 ## Why this project matters
 
@@ -19,17 +19,15 @@ Most chat groups are noisy, repetitive, and hard to summarize quickly. Unread tu
 ## Architecture
 
 - Frontend: React + Vite
-- Triage logic: deterministic parsing and rule-based classification in `src/features/triage/`
+- Chat parsing: WhatsApp-aware parsing in `src/features/triage/logic.js`
 - AI layer: WebLLM + Web Worker integration in `src/ai/`
 - Privacy model: all processing stays in-browser; no backend upload path is required
 
 ## Key features
 
 - WhatsApp-aware parsing for plain messages and timestamped exports
-- Deadline extraction using relative and explicit date/time language
-- Ownership detection for tasks and commitments from named assignments or direct commitments
-- Question triage that checks whether the user was actually addressed
-- Local model summaries as an optional helper, not the sole source of truth
+- Local summaries and extracted key details
+- Selectable small local models for browsers with WebGPU support
 
 ## Local development
 
@@ -58,7 +56,7 @@ Unread is designed to be local-first:
 
 ## Limitations
 
-This project is intentionally transparent about uncertainty. Rule-based detection works best for clear English-language cues, while multi-language and informal phrasing may still require human review. The local model summary is a helper layer and should not be treated as guaranteed truth.
+This project is intentionally transparent about uncertainty. Model summaries may miss or misinterpret informal, ambiguous, or multilingual messages and should be reviewed for accuracy. WebGPU is required to run the local model.
 
 ## Project structure
 

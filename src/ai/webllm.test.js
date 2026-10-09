@@ -56,6 +56,36 @@ test("reports a useful error when both structured responses are truncated", asyn
   );
 });
 
+test("splits a section and retries when both responses hit the generation limit", async () => {
+  const requests = [];
+  const statuses = [];
+  const engine = {
+    chat: {
+      completions: {
+        create: async (options) => {
+          requests.push(options);
+          const content = options.messages[1].content;
+          return content.length > 700
+            ? stream('{"updates":[', "length")
+            : stream('{"updates":[],"decisions":[],"deadlines":[],"tasks":[]}');
+        },
+      },
+    },
+  };
+
+  const result = await extract(
+    engine,
+    [{ i: 0, who: "Alex", text: "x".repeat(1000) }],
+    "Shubham",
+    (status) => statuses.push(status),
+  );
+
+  assert.equal(requests.length, 4);
+  assert.ok(requests.slice(2).every((request) => request.messages[1].content.length <= 700));
+  assert.ok(statuses.some((status) => status.includes("smaller pieces")));
+  assert.deepEqual(result.updates, []);
+});
+
 test("retries without constrained JSON mode when WebLLM grammar matcher initialization fails", async () => {
   const requests = [];
   const engine = {

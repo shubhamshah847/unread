@@ -212,6 +212,12 @@ mark {
   background: #fff8f7;
 }
 .model-summary-box .eyebrow { letter-spacing: 0.08em; }
+.summary-panel { gap: 18px; }
+.summary-text { margin: 0; font-size: 1.05rem; line-height: 1.7; }
+.result-list { margin: 0; padding: 0 0 0 1.15rem; }
+.result-list li { padding: 4px 0; }
+.result-detail { display: block; color: var(--muted); font-size: 0.82rem; }
+.ai-progress-panel { display: grid; gap: 8px; color: var(--muted); font-size: 0.85rem; }
 .inbox-results { display: grid; gap: 14px; }
 .inbox-results-head {
   display: flex;
