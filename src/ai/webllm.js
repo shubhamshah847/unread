@@ -1,9 +1,10 @@
 import { CreateWebWorkerMLCEngine } from "@mlc-ai/web-llm";
+import { normalizeResult, parseModelJson } from "./output.js";
 
 // Verify model IDs against webllm.prebuiltAppConfig.model_list if loading fails.
 export const MODELS = [
-  { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 3B (~2.5 GB VRAM)" },
-  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 1B (light, ~1 GB)" },
+  { id: "Llama-3.2-1B-Instruct-q4f16_1-MLC", label: "Llama 3.2 1B · recommended, lighter (~1 GB)" },
+  { id: "Qwen2.5-3B-Instruct-q4f16_1-MLC", label: "Qwen 2.5 3B · larger (~2.5 GB)" },
 ];
 
 // Checks if the user's browser supports WebGPU hardware acceleration
@@ -16,6 +17,12 @@ export const loadEngine = (id, cb) =>
     id,
     { initProgressCallback: cb }
   );
+
+export async function unloadEngine(engine) {
+  if (typeof engine?.unload === "function") {
+    await engine.unload();
+  }
+}
 
 // Strict system prompt forcing structured JSON extraction
 const SYS = (me) => `You summarize chat logs. The reader is "${me || "the user"}". Reply in English with ONLY this JSON: {"summary":"max 2 sentences","decisions":["..."],"tasks":[{"task":"","owner":"","deadline":"","for_me":true}]}. Rules: use only what is written in the chat. Never invent people, places or events. Add a task only if a message clearly asks someone to do something. The chat may be in Romanized Nepali, Hindi or mixed languages. If you cannot understand it, set summary to "Could not understand this chat well enough to summarize." and leave the arrays empty.`;
@@ -48,57 +55,43 @@ function pick(res) {
   return res.filter((x) => keep.has(x.i));
 }
 
-function parseModelJson(raw) {
-  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  try {
-    return JSON.parse(cleaned);
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start === -1 || end <= start) throw new Error("Response did not contain a JSON object.");
-    return JSON.parse(cleaned.slice(start, end + 1));
-  }
-}
-
-function normalizeResult(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("JSON response must be an object.");
-  }
-
-  return {
-    summary: typeof value.summary === "string" ? value.summary : "",
-    decisions: Array.isArray(value.decisions) ? value.decisions.map(String) : [],
-    tasks: Array.isArray(value.tasks) ? value.tasks.map((task) => {
-      if (typeof task === "string") return { task, owner: "", deadline: "", for_me: false };
-      return {
-        task: typeof task?.task === "string" ? task.task : "",
-        owner: typeof task?.owner === "string" ? task.owner : "",
-        deadline: typeof task?.deadline === "string" ? task.deadline : "",
-        for_me: Boolean(task?.for_me),
-      };
-    }).filter((task) => task.task) : [],
-  };
-}
-
 // Retry without constrained JSON mode when the model or runtime rejects it.
-async function ask(engine, system, user) {
+async function ask(engine, system, user, onProgress) {
   for (let attempt = 1; attempt <= 2; attempt++) {
-    let rawResponse = "<no response received>";
     try {
       const options = {
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         temperature: 0.1,
         max_tokens: 600,
+        stream: true,
       };
       if (attempt === 1) options.response_format = { type: "json_object" };
 
       const response = await engine.chat.completions.create(options);
+      if (response && typeof response[Symbol.asyncIterator] === "function") {
+        let raw = "";
+        let lastReportedLength = 0;
+        for await (const chunk of response) {
+          const content = chunk.choices?.[0]?.delta?.content;
+          if (typeof content !== "string") continue;
+          raw += content;
+          if (raw.length - lastReportedLength >= 120) {
+            onProgress?.(raw.length);
+            lastReportedLength = raw.length;
+          }
+        }
+        if (!raw.trim()) throw new Error("Model returned an empty response.");
+        onProgress?.(raw.length);
+        return normalizeResult(parseModelJson(raw));
+      }
+
+      // Keep compatibility with engines that do not provide a streaming response.
       const raw = response.choices?.[0]?.message?.content;
-      if (typeof raw === "string") rawResponse = raw;
       if (typeof raw !== "string" || !raw.trim()) throw new Error("Model returned an empty response.");
+      onProgress?.(raw.length);
       return normalizeResult(parseModelJson(raw));
     } catch (error) {
-      console.error(`Extraction attempt ${attempt} failed${attempt === 1 ? "; retrying without JSON mode" : "; no retries left"}:`, error, "Response:", rawResponse);
+      if (attempt === 2) return null;
     }
   }
 
@@ -119,7 +112,9 @@ export async function extract(engine, res, me, onStep) {
   // 2. Extract tasks and sub-summaries per chunk
   for (let index = 0; index < chatChunks.length; index++) {
     onStep?.(`Reading part ${index + 1} of ${chatChunks.length}...`);
-    const result = await ask(engine, SYS(me), chatChunks[index]);
+    const result = await ask(engine, SYS(me), chatChunks[index], (length) => {
+      onStep?.(`Generating part ${index + 1} of ${chatChunks.length} · ${length} characters received locally`);
+    });
     if (result) parts.push(result);
   }
   if (!parts.length) return null;
@@ -129,7 +124,9 @@ export async function extract(engine, res, me, onStep) {
   let summary = summaries.join(" ");
   if (summaries.length > 1) {
     onStep?.("Finalizing master summary...");
-    const result = await ask(engine, 'Merge into ONE summary of max 2 sentences. Return ONLY JSON: {"summary":""}', summary);
+    const result = await ask(engine, 'Merge into ONE summary of max 2 sentences. Return ONLY JSON: {"summary":""}', summary, (length) => {
+      onStep?.(`Finalizing summary · ${length} characters received locally`);
+    });
     if (result?.summary) summary = result.summary;
   }
 

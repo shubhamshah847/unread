@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
-import { MODELS, hasWebGPU, loadEngine, extract } from "./ai/webllm.js";
+import { MODELS, hasWebGPU, loadEngine, unloadEngine, extract } from "./ai/webllm.js";
 import { analyze, parse } from "./features/triage/logic.js";
 
 const fmt = (date, hasTime = false) => date ? date.toLocaleString([], hasTime
   ? { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }
   : { month: "short", day: "numeric", year: "numeric" }) : "";
 const esc = (text) => text.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+const SAMPLE_CHAT = [
+  "Ava: Shubham, can you send the project draft by tomorrow?",
+  "Shubham: Sure, I'll finish it tonight.",
+  "Ben: Agreed, we're going with MongoDB for the prototype.",
+  "Maya: Shubham, can you review the deployment checklist when you have a moment?",
+].join("\n");
 
 function Highlight({ text, me }) {
   if (!me) return text;
@@ -27,6 +33,12 @@ function Item({ item, me }) {
       </div>
       <div><Highlight text={item.text} me={me} /></div>
       {item.tags.length > 0 && <div className="meta">{item.tags.join(", ")}</div>}
+      <details className="item-explanation">
+        <summary>Why this?</summary>
+        {item.signals?.length
+          ? <ul>{item.signals.map((signal) => <li key={signal.label}>{signal.label} (+{signal.points})</li>)}</ul>
+          : <p>No triage signals matched this message.</p>}
+      </details>
     </div>
   );
 }
@@ -88,23 +100,44 @@ export default function App() {
     setStatus("");
   };
 
+  const chooseModel = async (nextModel) => {
+    setModel(nextModel);
+    const previousEngine = engine;
+    setEngine(null);
+    if (previousEngine) {
+      try {
+        await unloadEngine(previousEngine.instance);
+        setStatus("Previous local model released. The selected model will load when you request a summary.");
+      } catch {
+        setStatus("The previous model could not be released cleanly. Reload the page if the new model cannot start.");
+      }
+    }
+  };
+
   const runAI = async () => {
     if (!res) return;
     setBusy(true);
+    setAi(null);
+    setProg(0);
+    setStatus(engine
+      ? "Preparing your chat for local summarization…"
+      : "Starting the local model. First use may download model files and take several minutes.");
     try {
-      let activeEngine = engine;
+      let activeEngine = engine?.modelId === model ? engine.instance : null;
       if (!activeEngine) {
         activeEngine = await loadEngine(model, (progress) => {
           setProg(progress.progress || 0);
-          setStatus(progress.text);
+          setStatus(progress.text || "Downloading and initializing the local model…");
         });
-        setEngine(activeEngine);
+        setEngine({ modelId: model, instance: activeEngine });
       }
+      setStatus("Model ready. Sending chat text to the on-device model for summarization…");
       const result = await extract(activeEngine, res, me.trim(), setStatus);
       setAi(result);
       setStatus(result ? "Done. This summary was made on your device." : "The model returned unusable output. Showing rule-based results.");
     } catch (error) {
-      setStatus(`Local AI unavailable (${error.message}). Showing rule-based results.`);
+      const reason = error instanceof Error ? error.message : "Unknown model error";
+      setStatus(`Local AI couldn't finish (${reason}). Your rule-based results are still available. Try the lighter model or reload and retry.`);
     } finally {
       setBusy(false);
     }
@@ -137,14 +170,19 @@ export default function App() {
 
         <section className="panel composer">
           <label className="field-label" htmlFor="chat-input">Paste your chat</label>
-          <textarea id="chat-input" value={chat} onChange={(event) => setChat(event.target.value)} placeholder="Paste your WhatsApp chat export here. Your chat is processed locally on this device." />
+          <textarea id="chat-input" value={chat} onChange={(event) => setChat(event.target.value)} placeholder="Paste your WhatsApp chat export here. Your chat is processed locally on this device." disabled={busy} />
+          <p className="privacy-note">Rule-based analysis runs in this browser. Optional model files may be downloaded; your pasted chat is not sent to an app server.</p>
           <div className="toolbar">
-            <input value={me} onChange={(event) => setMe(event.target.value)} placeholder="Your name, e.g. Shubham" />
-            <button onClick={() => run()}>Analyze my chat</button>
+            <div className="name-field">
+              <label className="field-label" htmlFor="your-name">Your name (used to find messages addressed to you)</label>
+              <input id="your-name" value={me} onChange={(event) => setMe(event.target.value)} placeholder="e.g. Shubham" disabled={busy} />
+            </div>
+            <button onClick={() => run()} disabled={busy}>Analyze my chat</button>
+            <button className="secondary" onClick={() => { setChat(SAMPLE_CHAT); setMe("Shubham"); run(SAMPLE_CHAT, "Shubham"); }} disabled={busy}>Try sample chat</button>
           </div>
         </section>
 
-        {status && <div className="status-banner">{status}</div>}
+        {status && <div className="status-banner" role="status" aria-live="polite">{status}</div>}
 
         {res && (
           <>
@@ -163,16 +201,21 @@ export default function App() {
               <div className="summary-header"><h3>Local model summary</h3>{gpu && <span className="chip active">WebLLM ready</span>}</div>
               {gpu ? (
                 <div className="toolbar compact">
-                  <select value={model} onChange={(event) => { setModel(event.target.value); setEngine(null); }} disabled={busy}>
+                  <select value={model} onChange={(event) => chooseModel(event.target.value)} disabled={busy}>
                     {MODELS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                   </select>
-                  <button onClick={runAI} disabled={busy}>{busy ? "Working..." : "Summarize locally"}</button>
+                  <button onClick={runAI} disabled={busy}>{busy ? "Summarizing on this device…" : "Summarize locally"}</button>
                 </div>
               ) : <p className="empty">This browser has no WebGPU, so the model can't run here. The rule-based triage still works.</p>}
-              
-              {busy && prog > 0 && prog < 1 && (
-                <div className="progress">
-                  <i style={{ width: `${Math.round(prog * 100)}%` }} />
+
+              {busy && (
+                <div className="ai-progress" aria-hidden="true">
+                  <div className="progress">
+                    {prog > 0 && prog < 1
+                      ? <i style={{ width: `${Math.round(prog * 100)}%` }} />
+                      : <i className="indeterminate" />}
+                  </div>
+                  <span>{prog > 0 && prog < 1 ? `Loading model · ${Math.round(prog * 100)}%` : "Local model is processing…"}</span>
                 </div>
               )}
               

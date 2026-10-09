@@ -37,6 +37,7 @@ button {
 }
 button:hover { transform: translateY(-1px); background: var(--primary-strong); }
 button:disabled { opacity: 0.6; cursor: wait; }
+button:focus-visible, summary:focus-visible { outline: 3px solid #7f1d1d; outline-offset: 3px; }
 button.secondary {
   background: #ffffff;
   color: var(--text);
@@ -121,6 +122,9 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .toolbar { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .toolbar input { flex: 1 1 220px; }
 .toolbar button { flex: 0 0 auto; }
+.name-field { flex: 1 1 260px; }
+.name-field .field-label { margin-bottom: 6px; }
+.privacy-note { margin: 8px 0 0; color: var(--muted); font-size: 0.85rem; }
 .toolbar.compact { margin-top: 12px; }
 .toolbar.compact select { flex: 1 1 260px; }
 .status-banner {
@@ -150,6 +154,10 @@ h1, h2, h3, h4, p { margin-top: 0; }
 .item.High { border-color: var(--danger); }
 .item.Medium { border-color: #d1d1d1; }
 .item.Low { border-color: #d1d1d1; }
+.item-explanation { margin-top: 8px; color: var(--muted); font-size: 0.86rem; }
+.item-explanation summary { width: fit-content; cursor: pointer; font-weight: 650; color: var(--primary-strong); }
+.item-explanation ul { margin: 6px 0 0; padding-left: 1.2rem; }
+.item-explanation p { margin: 6px 0 0; }
 .meta {
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 6px;
   color: var(--muted); font-size: 0.82rem;
@@ -182,6 +190,18 @@ mark {
 .progress i {
   display: block; height: 100%; border-radius: inherit;
   background: var(--primary);
+}
+.ai-progress { display: grid; gap: 7px; color: var(--muted); font-size: 0.82rem; }
+.progress i.indeterminate {
+  width: 35%;
+  animation: progress-slide 1.4s ease-in-out infinite alternate;
+}
+@keyframes progress-slide {
+  from { transform: translateX(0); }
+  to { transform: translateX(185%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress i.indeterminate { animation: none; width: 100%; }
 }
 @media (max-width: 700px) {
   .topbar { align-items: flex-start; }

@@ -68,3 +68,11 @@ test("links a later commitment to the earlier task instead of creating a duplica
   assert.equal(result[1].taskOwner, "");
   assert.equal(result[2].tags.includes("Task"), false);
 });
+
+test("explains each priority score with matching rule contributions", () => {
+  const [item] = analyze([
+    { i: 0, who: "Shubham", text: "Please send the report today?" },
+  ], "Shubham");
+  assert.equal(item.signals.some((signal) => signal.label === "Action or task wording"), true);
+  assert.equal(item.score, item.signals.reduce((sum, signal) => sum + signal.points, 0));
+});

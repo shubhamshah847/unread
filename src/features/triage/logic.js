@@ -182,12 +182,13 @@ export function analyze(items, me = "") {
     const owner = assignedToMe ? name : hasTask ? taskOwner(text, item.who, name, participants) : "";
     const isDecision = /\b(?:agreed|approved|confirmed|use mongodb|going with)\b/.test(lower) && !/\?/.test(text);
 
-    let score = 0;
-    if (/\b(urgent|asap|today|tomorrow|tonight|overdue|late|deadline|please|immediately)\b/.test(lower)) score += 2;
-    if (/\?/.test(text)) score += 1;
-    if (isDecision) score += 3;
-    if (hasTask) score += 2;
-    if (isMe) score += 1;
+    const signals = [];
+    if (/\b(urgent|asap|today|tomorrow|tonight|overdue|late|deadline|please|immediately)\b/.test(lower)) signals.push({ label: "Urgency or deadline wording", points: 2 });
+    if (/\?/.test(text)) signals.push({ label: "Contains a question", points: 1 });
+    if (isDecision) signals.push({ label: "Agreement or decision wording", points: 3 });
+    if (hasTask) signals.push({ label: "Action or task wording", points: 2 });
+    if (isMe) signals.push({ label: "Sent by you", points: 1 });
+    const score = signals.reduce((total, signal) => total + signal.points, 0);
 
     const tags = [];
     if (isDecision) tags.push("Decision");
@@ -204,6 +205,7 @@ export function analyze(items, me = "") {
     return {
       ...item,
       score,
+      signals,
       pri: score >= 4 ? "High" : score >= 2 ? "Medium" : "Low",
       status,
       due,
