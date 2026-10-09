@@ -6,6 +6,26 @@ Improve Unread against the five evaluation dimensions below. The current reporte
 
 Unread is a browser-based React + Vite application that parses pasted WhatsApp-style exports, performs deterministic triage in `src/features/triage/logic.js`, and optionally uses `@mlc-ai/web-llm` in a Web Worker for local summarization. There is currently no application server or database. Treat that as an intentional browser-local architecture, not as a missing backend to fill with an unnecessary cloud service. Preserve the rule-based workflow when WebGPU or the model is unavailable.
 
+## Product requirement: structured inbox, not a paragraph
+
+The main user need is to scan a long chat and quickly find **updates, decisions, dates/deadlines, tasks/owners, and messages needing a reply**. The local model must extract these as separate structured fields, and the UI must render them as individual, clearly labeled cards/boxes. Do not make the model's main output a long narrative paragraph and do not repeat the same extracted facts in prose and cards. A short recap may be shown only as an optional secondary element; it must not replace the structured fields.
+
+Use this as the canonical extraction contract (validate it at the model boundary and tolerate omitted optional arrays as empty arrays):
+
+```json
+{
+	"updates": [{ "person": "Alex", "update": "Pushed registration and authentication", "date": "" }],
+	"decisions": [{ "decision": "Use MongoDB for the database", "by": "Rahul", "date": "" }],
+	"deadlines": [{ "item": "Fix password-reset bug", "owner": "Alex", "date": "3 PM", "source": "message evidence" }],
+	"tasks": [{ "task": "Review API documentation", "owner": "Priya", "deadline": "", "for_me": false, "source": "message evidence" }],
+	"replies": [{ "question": "Confirm when the login page is ready", "asked_by": "Shubham", "for_person": "team", "answered": false }]
+}
+```
+
+Keep each card item concise and evidence-grounded. Preserve relative date wording if the transcript has no timestamp/reference date to resolve it safely. Never turn “before Friday” or “3 PM” into a fabricated calendar date. Use empty strings for unknown owner/date, and distinguish “not stated” from an explicit date. The UI should show the speaker/source and any explicit timestamp, deadline, owner, and status as separate visual metadata, not bury these details in a sentence. Rule-based results remain authoritative where available; label AI-only suggestions and avoid duplicates.
+
+This contract intentionally supersedes any older model response shape in the repository. When implementing it, update the system prompt, output validator/normalizer, UI rendering and merging logic, and unit tests together. Do not silently drop `updates`, `deadlines`, `replies`, `by`, `asked_by`, `for_person`, or `source` while normalizing model output. If an existing field has a different representation, migrate it explicitly and test both valid and malformed responses.
+
 ## Instructions to the coding agent
 
 Work in the existing repository; do not replace the app with a scaffold or introduce a backend merely to make the architecture appear more complex.
@@ -69,11 +89,22 @@ Help people reach the important messages quickly, understand why they matter, an
 ### Requested improvements
 
 1. **Improve the first-use path.** Explain the expected WhatsApp export format, show a privacy note next to the paste area, and offer a synthetic sample. Provide actionable feedback when no messages parse, rather than silently showing an empty result.
-2. **Make result navigation clearer.** Give the catch-up summary clear counts and priorities, and make sections easy to scan. Ensure badges and colors are not the only way to convey urgency or status. Avoid duplicate items appearing confusingly across the summary and detail sections.
-3. **Build an accessible explanation interaction.** If using a modal or drawer, support keyboard opening/closing, Escape, visible focus, focus return, and appropriate dialog semantics. If a simpler inline disclosure works better, use that instead. Announce analysis progress and completion with an appropriate live region without making screen readers repeat the full transcript.
-4. **Support responsive and keyboard use.** Check narrow mobile widths, zoom/reflow, tab order, focus indicators, textarea labeling, button names, and contrast. Use semantic HTML and WCAG 2.2 AA as a target; report any unverified criteria rather than claiming certification.
-5. **Provide loading and recovery states.** Explain model download/loading progress, disable conflicting actions while busy, and provide a retry or return-to-rules option after failure. State clearly when WebGPU is unsupported. Do not tell users that VRAM was measured unless a supported, reliable measurement is actually available.
-6. **Add useful output actions.** Allow copying a concise catch-up summary or exporting selected results as Markdown/JSON. Escape and format user-provided content safely, preserve UTF-8, and provide success/failure feedback. Do not export the entire transcript unless the user explicitly selects that action.
+2. **Make results an inbox dashboard.** Render separate count-labeled boxes for **Updates**, **Decisions**, **Dates & deadlines**, **Tasks & owners**, and **Needs your reply**. Each result is a compact item with explicit fields/metadata—not a narrative paragraph. Display the sender, source timestamp when present, owner, deadline/date, and status as their own labels where applicable. On small screens, stack boxes in a clear reading order.
+3. **Avoid duplicate and conflicting items.** Merge exact duplicates from the rule engine and LLM without discarding useful metadata. Prefer a rule-derived owner/date over an AI guess; where facts conflict, preserve the source evidence and label ambiguity rather than silently choosing a value. Do not show a prose recap that restates all card contents.
+4. **Build an accessible explanation interaction.** If using a modal or drawer, support keyboard opening/closing, Escape, visible focus, focus return, and appropriate dialog semantics. If a simpler inline disclosure works better, use that instead. Announce analysis progress and completion with an appropriate live region without making screen readers repeat the full transcript.
+5. **Support responsive and keyboard use.** Check narrow mobile widths, zoom/reflow, tab order, focus indicators, textarea labeling, button names, and contrast. Use semantic HTML and WCAG 2.2 AA as a target; report any unverified criteria rather than claiming certification.
+6. **Provide loading and recovery states.** Explain model download/loading progress, disable conflicting actions while busy, and provide a retry or return-to-rules option after failure. State clearly when WebGPU is unsupported. Do not tell users that VRAM was measured unless a supported, reliable measurement is actually available.
+7. **Add useful output actions.** Allow copying or exporting selected structured fields as Markdown/JSON. Preserve the same categories and metadata in the export. Escape and format user-provided content safely, preserve UTF-8, and provide success/failure feedback. Do not export the entire transcript unless the user explicitly selects that action.
+
+### Example acceptance scenario
+
+Given a synthetic conversation where Rahul asks the team to finish work before Friday’s demo, Shubham asks Priya to review API docs, Alex reports that authentication work was pushed, the team agrees to use MongoDB, and Alex is asked to fix a password-reset bug by 3 PM, the result should be grouped into the correct boxes. “Use MongoDB” belongs in **Decisions**; “fix password-reset bug” belongs in **Tasks & owners** with Alex and the original “3 PM” wording; the pushed feature belongs in **Updates**; “before Friday’s demo” belongs in **Dates & deadlines** with its associated work if the evidence supports the link. Do not return one paragraph containing all of these facts instead of the boxes. An unrelated/ambiguous assignment must remain unassigned.
+
+### Acceptance checks
+
+- Each box has a correct count, meaningful empty state, and concise entries with available people/date/owner metadata.
+- Rule-based and AI-derived items are distinguishable where needed, deduplicated, and never presented as certain when evidence is ambiguous.
+- The main result view is useful without opening or reading any narrative recap.
 
 ### Acceptance checks
 

@@ -43,14 +43,27 @@ function Item({ item, me }) {
   );
 }
 
-function Section({ title, items, me, empty }) {
+function InboxCard({ title, items, empty, me, variant = "" }) {
   return (
-    <section className="card panel">
-      <header className="section-head">
-        <h2>{title}</h2>
+    <section className={`inbox-card ${variant}`}>
+      <header className="inbox-card-head">
+        <h3>{title}</h3>
         <span className="count-badge">{items.length}</span>
       </header>
-      {items.length ? items.map((item) => <Item key={item.i} item={item} me={me} />) : <p className="empty">{empty}</p>}
+      {items.length ? items.map((item) => (
+        <article className="inbox-entry" key={`${title}-${item.i}`}>
+          <div className="inbox-entry-meta">
+            <span>{item.who}</span>
+            {item.sentAt && <time dateTime={item.sentAt.toISOString()}>{fmt(item.sentAt, true)}</time>}
+            {item.due && <span className={`chip ${item.status}`}>{item.status === "overdue" ? "Overdue · " : "Due · "}{fmt(item.due, item.dueHasTime)}</span>}
+            {item.deadlineLabel && <span className="chip soon">Deadline · {item.deadlineLabel}</span>}
+            {item.dateLabel && <span className="chip">Date · {item.dateLabel}</span>}
+            {(item.taskOwner || item.ownerLabel) && <span className="chip active">Owner · {item.taskOwner || item.ownerLabel}{item.taskForMe ? " (you)" : ""}</span>}
+          </div>
+          <p><Highlight text={item.text} me={me} /></p>
+          {item.sourceLabel && <p className="inbox-source">Evidence · {item.sourceLabel}</p>}
+        </article>
+      )) : <p className="empty">{empty}</p>}
     </section>
   );
 }
@@ -136,7 +149,7 @@ export default function App() {
       setAi(result);
       setStatus(result ? "Done. This summary was made on your device." : "The model returned unusable output. Showing rule-based results.");
     } catch (error) {
-      const reason = error instanceof Error ? error.message : "Unknown model error";
+      const reason = error instanceof Error ? error.message.slice(0, 220) : "Unknown model error";
       setStatus(`Local AI couldn't finish (${reason}). Your rule-based results are still available. Try the lighter model or reload and retry.`);
     } finally {
       setBusy(false);
@@ -150,6 +163,50 @@ export default function App() {
   const decisions = by((item) => item.tags.includes("Decision"));
   const tasks = by((item) => item.tags.includes("Task"));
   const top = by((item) => item.score >= 4).slice(0, 3);
+  const deadlines = by((item) => Boolean(item.due));
+  const progressUpdates = by((item) => /\b(?:pushed|deployed|completed|finished|fixed|working on|in progress|tested|released|submitted|shared|updated|blocked|waiting)\b/i.test(item.text));
+  const inboxDecisions = [
+    ...decisions,
+    ...(ai?.decisions || []).map((decision, index) => ({
+      i: `ai-decision-${index}`,
+      who: decision.by || "Local AI extraction",
+      text: decision.decision || "",
+      dateLabel: decision.date || "",
+      sourceLabel: decision.source || "",
+    })),
+  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
+  const inboxDeadlines = [
+    ...deadlines,
+    ...(ai?.deadlines || []).map((deadline, index) => ({
+      i: `ai-deadline-${index}`,
+      who: "Local AI extraction",
+      text: deadline.item,
+      ownerLabel: deadline.owner || "Unassigned",
+      deadlineLabel: deadline.date || "Date unclear",
+      sourceLabel: deadline.source || "",
+    })),
+  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
+  const inboxTasks = [
+    ...tasks,
+    ...(ai?.tasks || []).map((task, index) => ({
+      i: `ai-task-${index}`,
+      who: "Local AI suggestion",
+      text: task.task,
+      ownerLabel: task.owner || "Unassigned",
+      deadlineLabel: task.deadline || "",
+      taskForMe: task.for_me,
+      sourceLabel: task.source || "",
+    })),
+  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
+  const inboxUpdates = [
+    ...progressUpdates,
+    ...(ai?.updates || []).map((update, index) => ({
+      i: `ai-update-${index}`,
+      who: update.person || "Local AI extraction",
+      text: update.update,
+      dateLabel: update.date,
+    })),
+  ].filter((item, index, all) => all.findIndex((candidate) => candidate.text.toLowerCase() === item.text.toLowerCase()) === index);
 
   return (
     <div className="app-shell">
@@ -220,41 +277,31 @@ export default function App() {
               )}
               
               {ai && (
-                <>
-                  <p className="summary">{ai.summary}</p>
-                  {ai.tasks.length > 0 && (
-                    <>
-                      <h4>Tasks</h4>
-                      <ul className="list">
-                        {ai.tasks.map((task, index) => (
-                          <li key={index}>
-                            <b>{task.task}</b>
-                            {task.owner && ` - ${task.owner}`}
-                            {task.deadline && ` (${task.deadline})`}
-                            {task.for_me && <span className="chip soon">You</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                  {ai.decisions.length > 0 && (
-                    <>
-                      <h4>Decisions</h4>
-                      <ul className="list">
-                        {ai.decisions.map((decision, index) => (
-                          <li key={index}>{String(decision)}</li>
-                        ))}
-                      </ul>
-                    </>
-                  )}
-                </>
+                <div className="model-summary-box">
+                  <span className="eyebrow">Local AI · extracted fields</span>
+                  <div className="model-field-counts">
+                    <div><strong>{ai.updates?.length || 0}</strong><span>Updates</span></div>
+                    <div><strong>{ai.decisions?.length || 0}</strong><span>Decisions</span></div>
+                    <div><strong>{ai.deadlines?.length || 0}</strong><span>Dates</span></div>
+                    <div><strong>{ai.tasks?.length || 0}</strong><span>Tasks</span></div>
+                  </div>
+                </div>
               )}
             </section>
 
-            <Section title="Overdue and due soon" items={[...overdue, ...soon]} me={me} empty="No deadlines found." />
-            <Section title="Needs your reply" items={replies} me={me} empty="No unanswered questions for you." />
-            <Section title="Decisions" items={decisions} me={me} empty="No decisions found." />
-            <Section title="Tasks" items={tasks} me={me} empty="No tasks found." />
+            <section className="inbox-results" aria-label="Chat highlights">
+              <header className="inbox-results-head">
+                <div><p className="eyebrow">Your chat, organized</p><h2>Inbox highlights</h2></div>
+                <p>Sorted into decisions, dates, actions, replies, and updates.</p>
+              </header>
+              <div className="inbox-grid">
+                <InboxCard title="Decisions" items={inboxDecisions} me={me} empty="No clear decisions found." variant="decision-card" />
+                <InboxCard title="Dates & deadlines" items={inboxDeadlines} me={me} empty="No dates or deadlines found." variant="deadline-card" />
+                <InboxCard title="Tasks & owners" items={inboxTasks} me={me} empty="No clear assigned tasks found." variant="task-card" />
+                <InboxCard title="Needs your reply" items={replies} me={me} empty="No unanswered questions addressed to you." variant="reply-card" />
+                <InboxCard title="Progress & updates" items={inboxUpdates} me={me} empty="No explicit progress updates found." variant="updates-card" />
+              </div>
+            </section>
           </>
         )}
       </main>

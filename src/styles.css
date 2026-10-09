@@ -203,11 +203,58 @@ mark {
 @media (prefers-reduced-motion: reduce) {
   .progress i.indeterminate { animation: none; width: 100%; }
 }
+.model-summary-box {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid #fecdca;
+  border-radius: 12px;
+  background: #fff8f7;
+}
+.model-summary-box .eyebrow { letter-spacing: 0.08em; }
+.inbox-results { display: grid; gap: 14px; }
+.inbox-results-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 4px 2px;
+}
+.inbox-results-head h2 { margin: 2px 0 0; font-size: clamp(1.4rem, 3vw, 1.9rem); }
+.inbox-results-head > p { margin: 0; color: var(--muted); }
+.inbox-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.inbox-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+.inbox-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.inbox-card-head h3 { margin: 0; font-size: 1rem; }
+.inbox-entry { padding: 12px 0; border-top: 1px solid var(--border); }
+.inbox-entry:first-of-type { border-top: 0; padding-top: 0; }
+.inbox-entry:last-child { padding-bottom: 0; }
+.inbox-entry p { margin: 7px 0 0; overflow-wrap: anywhere; }
+.inbox-entry .inbox-source { margin-top: 5px; color: var(--muted); font-size: 0.78rem; }
+.inbox-entry-meta { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; color: var(--muted); font-size: 0.78rem; }
+.inbox-entry-meta time { padding-left: 7px; border-left: 1px solid var(--border); }
+.inbox-entry .chip { font-size: 0.65rem; }
+.inbox-card .empty { padding: 4px 0 2px; font-size: 0.9rem; }
+.decision-card { border-top: 3px solid #8b5cf6; }
+.deadline-card { border-top: 3px solid var(--primary); }
+.task-card { border-top: 3px solid #2563eb; }
+.reply-card { border-top: 3px solid #d97706; }
+.updates-card { border-top: 3px solid #059669; }
 @media (max-width: 700px) {
   .topbar { align-items: flex-start; }
   .stats-grid { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
   .privacy-row { flex-direction: column; align-items: flex-start; }
   .toolbar { flex-direction: column; }
   .toolbar button, .toolbar select { width: 100%; }
+  .inbox-grid { grid-template-columns: 1fr; }
+  .inbox-card { padding: 16px; }
   .container { gap: 14px; }
 }

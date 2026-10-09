@@ -24,8 +24,8 @@ export async function unloadEngine(engine) {
   }
 }
 
-// Strict system prompt forcing structured JSON extraction
-const SYS = (me) => `You summarize chat logs. The reader is "${me || "the user"}". Reply in English with ONLY this JSON: {"summary":"max 2 sentences","decisions":["..."],"tasks":[{"task":"","owner":"","deadline":"","for_me":true}]}. Rules: use only what is written in the chat. Never invent people, places or events. Add a task only if a message clearly asks someone to do something. The chat may be in Romanized Nepali, Hindi or mixed languages. If you cannot understand it, set summary to "Could not understand this chat well enough to summarize." and leave the arrays empty.`;
+// Ask for labeled fields so the UI can render an inbox, not a paragraph.
+const SYS = (me) => `Extract a structured inbox from this chat for "${me || "the user"}". Reply ONLY with valid JSON matching this shape: {"updates":[{"person":"","update":"","date":""}],"decisions":[{"decision":"","by":"","date":"","source":""}],"deadlines":[{"item":"","owner":"","date":"","source":""}],"tasks":[{"task":"","owner":"","deadline":"","for_me":false,"source":""}]}. Rules: use only explicit chat evidence; never invent a date, owner, task, or decision. Keep each value short and factual. Put explicit progress/status statements (for example pushed, tested, blocked, completed, waiting) in updates. Use deadlines only when the chat gives a time/date; preserve its wording if ambiguous. Use empty strings for unknown text fields and empty arrays when no evidence exists. Assign for_me true only when the owner clearly matches "${me || "the user"}". The chat may use English, Romanized Nepali, Hindi, or mixed language; output the extracted values in concise English.`;
 
 // Breaks massive chat logs into smaller arrays to fit inside the AI's context limit
 function chunks(items, max = 5000) {
@@ -47,7 +47,7 @@ function chunks(items, max = 5000) {
 function pick(res) {
   const keep = new Set();
   res.forEach((x) => {
-    if (x.score > 0) {
+    if (x.score > 0 || /\b(?:pushed|deployed|completed|finished|fixed|working on|in progress|tested|released|submitted|shared|updated|blocked|waiting)\b/i.test(x.text)) {
       keep.add(x.i);
       if (x.i > 0) keep.add(x.i - 1);
     }
@@ -56,13 +56,14 @@ function pick(res) {
 }
 
 // Retry without constrained JSON mode when the model or runtime rejects it.
-async function ask(engine, system, user, onProgress) {
+async function ask(engine, system, user, onProgress, onStatus) {
+  let lastError = "Unknown model response error";
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const options = {
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
         temperature: 0.1,
-        max_tokens: 600,
+        max_tokens: 900,
         stream: true,
       };
       if (attempt === 1) options.response_format = { type: "json_object" };
@@ -91,11 +92,13 @@ async function ask(engine, system, user, onProgress) {
       onProgress?.(raw.length);
       return normalizeResult(parseModelJson(raw));
     } catch (error) {
-      if (attempt === 2) return null;
+      lastError = error instanceof Error ? error.message : "Unknown model response error";
+      if (attempt === 1) {
+        onStatus?.("The model response was invalid; retrying once without JSON mode…");
+      }
     }
   }
-
-  return null;
+  throw new Error(`The local model could not produce valid structured data after retry. ${lastError}`);
 }
 
 // The main orchestrator function: chunks, extracts, and merges summaries
@@ -112,23 +115,19 @@ export async function extract(engine, res, me, onStep) {
   // 2. Extract tasks and sub-summaries per chunk
   for (let index = 0; index < chatChunks.length; index++) {
     onStep?.(`Reading part ${index + 1} of ${chatChunks.length}...`);
-    const result = await ask(engine, SYS(me), chatChunks[index], (length) => {
-      onStep?.(`Generating part ${index + 1} of ${chatChunks.length} · ${length} characters received locally`);
-    });
+    const result = await ask(
+      engine,
+      SYS(me),
+      chatChunks[index],
+      (length) => onStep?.(`Generating part ${index + 1} of ${chatChunks.length} · ${length} characters received locally`),
+      onStep
+    );
     if (result) parts.push(result);
   }
   if (!parts.length) return null;
 
   // 3. Merge multiple chunk summaries into one master summary
-  const summaries = parts.map((part) => part.summary).filter(Boolean);
-  let summary = summaries.join(" ");
-  if (summaries.length > 1) {
-    onStep?.("Finalizing master summary...");
-    const result = await ask(engine, 'Merge into ONE summary of max 2 sentences. Return ONLY JSON: {"summary":""}', summary, (length) => {
-      onStep?.(`Finalizing summary · ${length} characters received locally`);
-    });
-    if (result?.summary) summary = result.summary;
-  }
+  onStep?.("Organizing extracted fields from all chat sections...");
 
   // 4. Deduplicate tasks
   const seen = new Set();
@@ -143,8 +142,9 @@ export async function extract(engine, res, me, onStep) {
 
   // 5. Return the final structured object
   return {
-    summary,
     tasks,
     decisions: [...new Set(parts.flatMap((part) => part.decisions || []))],
+    updates: parts.flatMap((part) => part.updates || []),
+    deadlines: parts.flatMap((part) => part.deadlines || []),
   };
 }
