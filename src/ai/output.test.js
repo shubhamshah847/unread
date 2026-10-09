@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeResult, parseModelJson } from "./output.js";
+import { getErrorMessage, normalizeResult, parseModelJson } from "./output.js";
+
+test("extracts useful messages from native and serialized worker errors", () => {
+  assert.equal(getErrorMessage(new Error("GPU initialization failed")), "GPU initialization failed");
+  assert.equal(getErrorMessage({ message: "Worker rejected request" }), "Worker rejected request");
+  assert.equal(getErrorMessage({ error: { message: "Device lost" } }), "Device lost");
+  assert.equal(getErrorMessage({ code: "unknown" }), '{"code":"unknown"}');
+});
 
 test("parses fenced JSON and normalizes optional task fields", () => {
   const parsed = parseModelJson('```json\n{"updates":[{"person":"Alex","update":"Pushed login","date":"today"}],"decisions":[{"decision":"Use MongoDB","by":"Rahul","date":"","source":"Agreed in chat"}],"deadlines":[{"item":"Demo","owner":"Rahul","date":"Friday","source":"Demo message"}],"tasks":[{"task":"Send notes","source":"Asked in chat"}]}\n```');

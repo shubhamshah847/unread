@@ -1,5 +1,5 @@
 import { CreateWebWorkerMLCEngine } from "@mlc-ai/web-llm";
-import { normalizeResult, parseModelJson } from "./output.js";
+import { getErrorMessage, normalizeResult, parseModelJson } from "./output.js";
 
 // Verify model IDs against webllm.prebuiltAppConfig.model_list if loading fails.
 export const MODELS = [
@@ -113,7 +113,7 @@ async function ask(engine, system, user, onProgress, onStatus) {
         throw error;
       }
     } catch (error) {
-      lastError = error instanceof Error ? error.message : "Unknown model response error";
+      lastError = getErrorMessage(error, "Unknown model response error");
       if (attempt === 1) {
         onStatus?.("The model output was incomplete; retrying with a shorter structured response…");
       }

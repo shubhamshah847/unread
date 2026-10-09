@@ -3,6 +3,24 @@ const MAX_SUMMARY_LENGTH = 2_000;
 const MAX_LIST_ITEMS = 30;
 const MAX_FIELD_LENGTH = 500;
 
+export function getErrorMessage(error, fallback = "Unknown model error") {
+  if (typeof error === "string" && error.trim()) return error.slice(0, 220);
+  if (error && typeof error === "object") {
+    const message = typeof error.message === "string" ? error.message
+      : typeof error.error?.message === "string" ? error.error.message
+        : typeof error.reason === "string" ? error.reason
+          : "";
+    if (message.trim()) return message.slice(0, 220);
+    try {
+      const serialized = JSON.stringify(error);
+      if (serialized && serialized !== "{}") return serialized.slice(0, 220);
+    } catch {
+      // Ignore un-serializable rejection values and use the fallback below.
+    }
+  }
+  return fallback;
+}
+
 function normalizeEntries(entries, fields, label) {
   if (entries === undefined || entries === null) return [];
   if (!Array.isArray(entries) || entries.length > MAX_LIST_ITEMS) {

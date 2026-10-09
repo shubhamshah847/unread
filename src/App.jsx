@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { MODELS, hasWebGPU, loadEngine, unloadEngine, extract } from "./ai/webllm.js";
+import { getErrorMessage } from "./ai/output.js";
 import { analyze, parse } from "./features/triage/logic.js";
 
 const fmt = (date, hasTime = false) => date ? date.toLocaleString([], hasTime
@@ -149,7 +150,7 @@ export default function App() {
       setAi(result);
       setStatus(result ? "Done. This summary was made on your device." : "The model returned unusable output. Showing rule-based results.");
     } catch (error) {
-      const reason = error instanceof Error ? error.message.slice(0, 220) : "Unknown model error";
+      const reason = getErrorMessage(error);
       setStatus(`Local AI couldn't finish (${reason}). Your rule-based results are still available. Try the lighter model or reload and retry.`);
     } finally {
       setBusy(false);
