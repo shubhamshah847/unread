@@ -59,6 +59,7 @@ function pick(res) {
 // Retry malformed or truncated output once, keeping JSON mode enabled.
 async function ask(engine, system, user, onProgress, onStatus) {
   let lastError = "Unknown model response error";
+  let useJsonMode = true;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const retryInstruction = attempt === 2
@@ -69,8 +70,8 @@ async function ask(engine, system, user, onProgress, onStatus) {
         temperature: 0.1,
         max_tokens: attempt === 1 ? 1400 : 1800,
         stream: true,
-        response_format: { type: "json_object" },
       };
+      if (useJsonMode) options.response_format = { type: "json_object" };
 
       const response = await engine.chat.completions.create(options);
       if (response && typeof response[Symbol.asyncIterator] === "function") {
@@ -115,7 +116,11 @@ async function ask(engine, system, user, onProgress, onStatus) {
     } catch (error) {
       lastError = getErrorMessage(error, "Unknown model response error");
       if (attempt === 1) {
-        onStatus?.("The model output was incomplete; retrying with a shorter structured response…");
+        const grammarMatcherFailed = /GrammarMatcherInitError|grammar matcher|Cannot pass non-string to std::string/i.test(lastError);
+        if (grammarMatcherFailed) useJsonMode = false;
+        onStatus?.(grammarMatcherFailed
+          ? "This model cannot initialize constrained JSON mode; retrying with plain generation and JSON instructions…"
+          : "The model output was incomplete; retrying with a shorter structured response…");
       }
     }
   }

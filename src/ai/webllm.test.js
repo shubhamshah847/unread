@@ -55,3 +55,30 @@ test("reports a useful error when both structured responses are truncated", asyn
     /cut off at its generation limit/,
   );
 });
+
+test("retries without constrained JSON mode when WebLLM grammar matcher initialization fails", async () => {
+  const requests = [];
+  const engine = {
+    chat: {
+      completions: {
+        create: async (options) => {
+          requests.push(options);
+          if (requests.length === 1) {
+            throw new Error("GrammarMatcherInitError: Cannot pass non-string to std::string");
+          }
+          return stream('{"updates":[{"person":"Alex","update":"Pushed auth","date":""}],"decisions":[],"deadlines":[],"tasks":[]}');
+        },
+      },
+    },
+  };
+  const statuses = [];
+
+  const result = await extract(engine, [{ i: 0, who: "Alex", text: "Pushed auth changes." }], "Shubham", (status) => statuses.push(status));
+
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].response_format, { type: "json_object" });
+  assert.equal(requests[1].response_format, undefined);
+  assert.match(requests[1].messages[0].content, /Return only complete valid JSON/);
+  assert.ok(statuses.some((status) => status.includes("plain generation")));
+  assert.deepEqual(result.updates, [{ person: "Alex", update: "Pushed auth", date: "" }]);
+});
