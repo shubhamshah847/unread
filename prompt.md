@@ -1,80 +1,140 @@
-# Unread — Vibe-Coding Prompt Pack
+﻿# Unread — Architecture & Code Quality Upgrade Pack
 
-This is a reusable collection of prompts for building, improving, testing, and presenting Unread. They describe the project as it exists now; they are reconstructed prompts, not a verbatim transcript of earlier chats. Use them one at a time and give the coding assistant access to the repository.
+To push your project evaluation scores from the current baseline (Backend & Architecture: 70, Code Standards & Quality: 75, UI / UX & Impact: 80, Security & Optimization: 80) toward a 90+ outcome across all categories, use the following targeted enhancement prompts.
 
-## Verified features already implemented
+---
 
-These project-specific details are present in the current code, not just future ideas:
+## 1. Backend & Architecture (Target: 95/100)
 
-- `logic.js` removes invisible Unicode format/direction characters, normalizes NBSP/narrow NBSP, parses common WhatsApp timestamps, preserves each parsed `sentAt`, and attaches multiline continuations.
-- `chrono-node` resolves supported English deadlines relative to message timestamps; parsed clock times are distinguished from date-only deadlines.
-- The rules flag replies only for questions that explicitly mention the configured reader, identify clear task owners/self-commitments, and avoid flagging a bare `call` in the tested Romanized Nepali phrase as a task.
-- Short AI inputs (up to 5,000 characters) are passed in full; longer inputs are filtered. The WebLLM response parser tolerates fenced/extra-text JSON, normalizes task shapes, retries without constrained JSON mode, and logs `Extraction attempt` errors.
-- Inference runs in a Web Worker. There is no app backend or demo-chat button; the person using the app pastes their own chat.
-- `logic.test.js` covers hidden characters/timestamps, continuation lines, date parsing, ownership, and selected false positives. `npm test` and `npm run build` are the verification commands.
+This track focuses on worker reliability, local state management, offline persistence, and WebGPU resource handling.
 
-When using the prompts below to describe the project, do not overstate support: rule keywords are English-focused, deadline parsing covers supported date phrases rather than every informal expression, and local-model summaries can still be wrong.
+### Prompt 1.1: Event-Driven Worker RPC & Streaming Pipeline
 
-## 1. Product brief
+> Refactor the Web Worker interface in `src/ai/` to use a typed RPC event protocol over `MessageChannel`.
+> 1. Implement streaming output from `@mlc-ai/web-llm` back to the React thread using async iteration or chunked event emission.
+> 2. Add explicit engine lifecycle hooks: `initEngine()`, `unloadEngine()`, and `getVRAMUsage()`. Trigger cleanup when switching models or resetting the app to avoid memory spikes and WebGPU instability.
+> 3. Add AbortController support in `worker.js` so user-triggered cancellation stops inference immediately without freezing or corrupting the GPU context.
 
-> Build **Unread**, a privacy-first, local-first chat triage web app. It should help someone quickly answer “What did I miss?” after a busy WhatsApp group chat. Let the user paste an exported chat, identify themselves by name, and surface possible deadlines, tasks, decisions, and questions addressed to them. Keep the experience simple, useful, and honest about uncertainty. Chat text must be processed in the browser; do not add a server upload path.
+### Prompt 1.2: Local IndexedDB Caching & State Machine
 
-## 2. Frontend and visual design
+> Implement an offline-first storage and pipeline layer in `src/features/triage/storage.js` using IndexedDB.
+> 1. Persist parsed chat ASTs, triage results, and local model summaries so sessions survive refreshes without any server dependency.
+> 2. Create a clean state machine: `IDLE -> PARSING -> HEURISTIC_TRIAGE -> MODEL_LOADING -> INFERRING -> COMPLETE / ERROR`.
+> 3. Expose this pipeline through a custom hook: `useTriagePipeline()` so React state changes remain predictable and debuggable.
 
-> Create a responsive React interface for Unread using the existing Vite project. Use a minimalist white background with black text, subtle gray borders, and restrained red accents. Include product branding, a short privacy statement, a chat paste area, a “Your name” field, an Analyze button, a connectivity indicator, and result sections for urgent items, deadlines, replies, decisions, and tasks. Make the empty state clear and do not populate user data automatically.
+---
 
-## 3. WhatsApp export parsing
+## 2. Code Standards & Quality (Target: 95/100)
 
-> Implement chat parsing in `src/features/triage/logic.js`. Support plain `Name: message` lines and common WhatsApp exports with timestamps, such as `08/10/26, 8:04 AM - Name: message` and bracketed timestamps. Strip invisible Unicode direction/format marks and normalize non-breaking spaces. Preserve the timestamp as each message’s reference date, and append multiline continuations to the preceding message. Never mistake a date/time fragment for a sender.
+This track focuses on strict runtime validation, deterministic parsing, and broader test coverage.
 
-## 4. Deterministic triage rules
+### Prompt 2.1: Zod Schema Validation & Strict AST Specification
 
-> Add a transparent, deterministic first-pass classifier for user-provided chat messages. Detect likely task requests, explicit decisions, questions that mention the user by name, and deadlines. Track a task owner only when the message supports one: a named assignment, a direct request, or the sender’s explicit commitment. Avoid interpreting an arbitrary occurrence of “call” or a generic question as a task/reply. Return structured message records so the UI can show sender, priority, deadline, owner, and category. Keep heuristic limitations explicit; do not claim perfect understanding.
+> Introduce runtime schema validation using `zod` for all parser outputs and WebLLM JSON extraction results.
+> 1. Define strict TypeScript interfaces and Zod schemas in `src/types/schema.ts` for `ChatMessage`, `TriageResult`, `ParsedDeadline`, and `LLMOutputSchema`.
+> 2. Wrap `JSON.parse` in `webllm.js` with `LLMOutputSchema.safeParse()`. If validation fails, attempt a non-destructive migration of JSON keys before falling back to the rule-based default.
+> 3. Enforce strict type safety across the app and remove implicit `any` usage or unsafe assertions.
 
-### As-built prompt for the distinctive rule behavior
+### Prompt 2.2: Vitest Comprehensive Test Matrix
 
-> In the existing Unread implementation, refine the current rules without replacing the app architecture: strip invisible Unicode and NBSP characters from WhatsApp lines; retain message timestamps for relative date parsing; detect task owners only from explicit name-addressing/assignment or the sender's first-person commitment; and require a question that mentions the configured reader before counting it as “Needs your reply.” Do not count the bare phrase `call garera pata lagau ta` as a task. Add a regression test for each of these behaviors and show the inferred owner/deadline on the relevant card.
+> Expand `src/features/triage/logic.test.js` into a full Vitest test matrix covering at least 90% of the logic layer.
+> 1. Parser tests: mixed line endings, 12/24-hour timestamps, system notices, multiline quotes, Unicode emoji, and zero-width characters.
+> 2. Context-linking tests: question-to-reply resolution, decision priority overrides, and assignment attribution (`Shubham`, `You`, and external owners).
+> 3. Deadline edge cases: "before 5pm", "this Friday", "next week", date-only vs explicit time, and strict overdue handling for past timestamps.
 
-## 5. Deadline extraction
+---
 
-> Improve deadline extraction without guessing. Use each message’s parsed timestamp as the reference date for relative phrases such as “tomorrow” and “next Friday”. Parse explicit dates and times with a date parser. Preserve whether a time was actually stated; if only a date is given, do not display a fabricated clock time. Keep “due soon” and “overdue” distinct and ensure a past parsed deadline is overdue. Add repeatable tests for timestamp formats, relative dates, explicit times, and messages with no deadline.
+## 3. UI / UX & Impact (Target: 95/100)
 
-### As-built deadline prompt
+This track focuses on interpretability, accessibility, and user confidence.
 
-> Use `chrono-node` with the parsed WhatsApp message timestamp as the reference date. Expose a deadline only when the message has a supported date cue, distinguish date-only from explicit-time results, and display that distinction in the card. Verify “by tomorrow”, “by 5pm”, timestamp date context, and no-deadline text with fixed-reference tests; do not invent an exact time for a date-only phrase.
+### Prompt 3.1: Developer & Inspector Debugger Modal
 
-## 6. Task ownership
+> Add a "Why this priority?" heuristic inspector modal to the React UI.
+> 1. Clicking any item card opens a drawer showing the exact rules fired, score contributions, timestamps, and raw parsed AST details.
+> 2. Add an "AI Debug View" toggle under the Local Model Summary panel to display the generated prompt, generation rate, and total latency.
 
-> Improve task ownership extraction. Identify the owner from clear cues such as “Shubham, can you send…”, “Shubham will prepare…”, or “I’ll send…” (the sender owns their own commitment). Mark a task as “for me” only when its owner matches the user-provided name. Do not assign a generic group task to the reader without evidence. Add tests for the user as owner, another participant as owner, sender commitment, and no clear owner.
+### Prompt 3.2: Accessible Design & Export Tooling
 
-### As-built ownership prompt
+> Improve the UI in `src/App.jsx` with production polish.
+> 1. Add full keyboard navigation, focus handling for modals, `Ctrl+Enter` to run analysis, ARIA live regions, and WCAG AA contrast compliance.
+> 2. Add export actions to copy the summary, decisions, and tasks as Markdown or JSON.
+> 3. Implement skeleton loaders, graceful error states, and clear recovery instructions when WebGPU is unavailable or VRAM is insufficient.
 
-> In each classified message, store the detected `taskOwner` and `taskForMe`. The UI should show the owner only when supported by a direct request, explicit named assignment, or the sender committing to an action. Include regression checks for the current user, a sender commitment, an unrelated question, and an unrelated Romanized Nepali phrase. Avoid inferring an owner merely because a person participated in the chat.
+---
 
-## 7. Local WebLLM integration
+## 4. Security & Optimization (Target: 95/100)
 
-> Integrate `@mlc-ai/web-llm` in the browser using a module Web Worker. Keep model loading and inference off the UI thread, report loading progress, and provide a clear error/fallback state if WebGPU or model initialization is unavailable. Use Qwen2.5 3B as the default model with a smaller supported alternative. Chat content must go only to the local in-browser model; explain that model files are downloaded on first use and require WebGPU and sufficient memory.
+This track focuses on network isolation, strict headers, and hardware-aware model loading.
 
-## 8. Grounded AI extraction
+### Prompt 4.1: Real-Time Network Leakage Inspector
 
-> Ask the local model for a short English summary, decisions, and actionable tasks with owner, deadline, and whether the task is for the reader. Require the model to use only the supplied messages, avoid inventing names/events, and admit when Romanized Nepali/Hindi is not understood. Send short chats in full; for longer chats, reduce noise carefully while retaining useful context. Accept JSON with minor formatting differences, normalize its output shape, retry without constrained JSON mode if necessary, and log useful errors with an `Extraction attempt` prefix. Treat the AI output as a helper, not as guaranteed truth.
+> Expand the runtime auditing in `App.jsx` and `public/_headers`.
+> 1. Monkey-patch `window.fetch` and `XMLHttpRequest` during development checks to block any external request not targeting official model weights.
+> 2. Show a "Zero-Data-Leakage Verified" badge that confirms chat text remains local and 0 bytes are uploaded.
 
-## 9. Privacy and deployment
+### Prompt 4.2: Cloudflare Headers & WebGPU Benchmarking
 
-> Keep this app static and local-first: no API server, analytics, chat upload, or chat persistence. Add Cloudflare Pages `_headers` for the cross-origin isolation requirements used by WebLLM’s threaded runtime. Document what the headers do, the Pages build command/output directory, and how deployment behavior may differ from local Vite. Do not imply that deploying the static site means chat contents are uploaded.
+> Harden `public/_headers` and WebGPU setup.
+> 1. Add strict headers:
+>    ```http
+>    /*
+>      Cross-Origin-Opener-Policy: same-origin
+>      Cross-Origin-Embedder-Policy: require-corp
+>      X-Content-Type-Options: nosniff
+>      X-Frame-Options: DENY
+>      Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://huggingface.co https://raw.githubusercontent.com https://cdn-lfs.huggingface.co;
+>    */
+>    ```
+> 2. Add hardware capability detection before model load (`navigator.gpu.requestAdapter()`) and recommend `Qwen2.5-1.5B` or `Qwen2.5-3B` based on reported VRAM and buffer limits.
 
-## 10. Project organization
+---
 
-> Organize the code into a clear frontend, AI, and triage structure: React UI under `src/`, WebLLM integration and worker under `src/ai/`, and parsing/classification under `src/features/triage/`. Do not create a fake backend; if none is needed, document that boundary and privacy rationale. Remove obsolete duplicate implementations and update import paths, scripts, and README to match the real tree.
+## 5. Production-Ready Unified System Prompt
 
-## 11. Testing and error checks
+```javascript
+import { z } from "zod";
 
-> Add automated tests for invisible-character handling, WhatsApp timestamps, multiline messages, relative and explicit deadlines, task ownership, and false-positive avoidance. Run the test suite and production build after changes. If a check fails, inspect the real source and fix the root cause rather than hiding the error. Report any remaining warning separately from build/test failures.
+export const SystemPromptSchema = z.object({
+  summary: z.string().max(300),
+  decisions: z.array(z.string()),
+  tasks: z.array(z.object({
+    task: z.string(),
+    owner: z.string(),
+    deadline: z.string().nullable(),
+    for_me: z.boolean(),
+  })),
+});
 
-## 12. Run and browser smoke test
+export const SYS_PROMPT = (me) => `
+You are a deterministic local-first chat triage engine extracting facts for user "${me || "the user"}".
+Return ONLY valid JSON matching this exact schema:
+{
+  "summary": "Max 2 concise sentences describing core intent and current project status.",
+  "decisions": ["Specific agreed-upon decisions only"],
+  "tasks": [
+    {
+      "task": "Action description",
+      "owner": "Name of person responsible or 'Unassigned'",
+      "deadline": "Extracted deadline string or null",
+      "for_me": true/false
+    }
+  ]
+}
 
-> Start the Vite development server from the project root. Open the served URL, paste a small timestamped chat, enter the reader’s name, click Analyze, and verify that sender names, dates, tasks, ownership, and reply counts look reasonable. If WebGPU is available and the user agrees to the model download, click Summarize locally and verify the result and browser console. Do not claim actual model inference was tested unless it completed.
+STRICT CONSTRAINTS:
+1. GROUND TRUTH ONLY: Extract only explicit facts. Never invent participants, dates, or tasks.
+2. DISAMBIGUATION: Assign `for_me` = true ONLY if the task owner specifically matches "${me || "the user"}".
+3. MULTILINGUAL SUPPORT: Process Romanized Nepali, Hindi, or code-switched text accurately into concise English outputs.
+4. UNCERTAINTY: If the chat is incoherent or lacks context, return:
+   {"summary": "Could not extract reliable information from this transcript.", "decisions": [], "tasks": []}
+`.trim();
+```
 
-## 13. Final README and interview explanation
+---
 
-> Write a README that describes Unread accurately: problem, user flow, architecture, local privacy model, deterministic heuristics versus AI helper, limitations, hardware requirements, local run/test/build commands, and Cloudflare Pages deployment. Include a concise interview summary explaining why the browser-only architecture was chosen and what future work would improve multilingual support, date coverage, and reliable evaluation.
+## 6. Evaluation Strategy
+
+Use these improvements to raise the project from a strong local prototype to a polished, production-quality handoff. The short-term goal is to make the architecture robust, the heuristics explainable, the UI trustworthy, and the privacy model verifiable.
+
+This is the quality bar that should be reflected in final documentation, code review notes, and project demos.

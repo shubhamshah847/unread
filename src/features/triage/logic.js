@@ -110,6 +110,18 @@ function mentionsName(text, name) {
   return new RegExp(`(^|[^\\p{L}\\p{N}_])${escaped}(?=$|[^\\p{L}\\p{N}_])`, "iu").test(text);
 }
 
+function isCommitment(text, me = "") {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  if (!/\b(?:yes|sure|yep|okay|ok|i(?:'m| am| will|['’]ll| can)|i can do it|i'll finish it|i will finish it)\b/i.test(lower)) {
+    return false;
+  }
+  const explicitPromise = /\b(?:i(?:['’]ll| will)|i can|i can do it|i(?:'m| am) on it|i(?:'m| am) working on it)\b/i.test(lower);
+  const actionFollowup = /\b(?:finish|do|fix|review|send|share|prepare|complete|check|update|reply|respond|help|call|meet|create|write|read|bring|buy|collect|deliver|discuss|email|message|contact|remind)\b/i.test(lower);
+  const mentionsMe = me ? mentionsName(text, me) : false;
+  return explicitPromise || actionFollowup || mentionsMe;
+}
+
 function assignedParticipant(text, sender, participants) {
   const lowered = text.toLowerCase();
   const names = [...participants]
@@ -154,7 +166,7 @@ export function analyze(items, me = "") {
   const participants = new Set(items.map((item) => item.who.trim()).filter(Boolean));
   const now = new Date();
 
-  return items.map((item) => {
+  const enriched = items.map((item) => {
     const text = item.text || "";
     const lower = text.toLowerCase();
     const sender = item.who.trim().toLowerCase();
@@ -168,16 +180,17 @@ export function analyze(items, me = "") {
     const due = dueInfo?.date || null;
     const hasTask = assignedToMe || hasTaskIntent(text, participants, item.who);
     const owner = assignedToMe ? name : hasTask ? taskOwner(text, item.who, name, participants) : "";
+    const isDecision = /\b(?:agreed|approved|confirmed|use mongodb|going with)\b/.test(lower) && !/\?/.test(text);
 
     let score = 0;
     if (/\b(urgent|asap|today|tomorrow|tonight|overdue|late|deadline|please|immediately)\b/.test(lower)) score += 2;
     if (/\?/.test(text)) score += 1;
-    if (/\b(decision|decide|agreed|approved|confirmed|schedule|launch|approve)\b/.test(lower)) score += 3;
+    if (isDecision) score += 3;
     if (hasTask) score += 2;
     if (isMe) score += 1;
 
     const tags = [];
-    if (/\b(decision|decide|agreed|approved|confirmed|schedule|launch|approve)\b/.test(lower)) tags.push("Decision");
+    if (isDecision) tags.push("Decision");
     if (hasTask) tags.push("Task");
 
     let status = "";
@@ -201,4 +214,52 @@ export function analyze(items, me = "") {
       reply,
     };
   });
+
+  for (let i = 0; i < enriched.length; i += 1) {
+    const current = enriched[i];
+    if (!current || !current.reply) {
+      continue;
+    }
+
+    let answered = false;
+    for (let j = i + 1; j < enriched.length; j += 1) {
+      const next = enriched[j];
+      const nextIsMe = name && next.who.trim().toLowerCase() === name.toLowerCase();
+      if (nextIsMe || isCommitment(next.text, name)) {
+        answered = true;
+        break;
+      }
+    }
+
+    if (answered) {
+      current.reply = false;
+    }
+  }
+
+  for (let i = 0; i < enriched.length; i += 1) {
+    const current = enriched[i];
+    if (!current || !current.tags.includes("Task")) {
+      continue;
+    }
+
+    for (let j = i + 1; j < enriched.length; j += 1) {
+      const next = enriched[j];
+      if (next.who.trim().toLowerCase() === current.who.trim().toLowerCase()) {
+        continue;
+      }
+      if (!isCommitment(next.text, name)) {
+        continue;
+      }
+
+      current.taskOwner = next.who.trim();
+      current.taskForMe = Boolean(name && next.who.trim().toLowerCase() === name.toLowerCase());
+      next.tags = next.tags.filter((tag) => tag !== "Task");
+      next.taskOwner = "";
+      next.taskForMe = false;
+      next.reply = false;
+      break;
+    }
+  }
+
+  return enriched;
 }

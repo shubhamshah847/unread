@@ -34,10 +34,37 @@ test("assigns tasks only where there is an action and attributes explicit owners
   const result = analyze(messages, "Shubham");
   assert.equal(result[0].taskOwner, "Shubham");
   assert.equal(result[0].taskForMe, true);
-  assert.equal(result[0].reply, true);
+  assert.equal(result[0].reply, false);
   assert.equal(result[1].taskOwner, "Ava");
   assert.equal(result[2].reply, false);
   assert.equal(result[2].tags.includes("Task"), false);
   assert.equal(result[3].tags.includes("Task"), false);
   assert.equal(result[4].taskOwner, "Shubham");
+});
+
+test("does not treat questions as final decisions and clears unanswered questions after a reply", () => {
+  const messages = [
+    { i: 0, who: "Priya", text: "We need to decide whether to use MongoDB?" },
+    { i: 1, who: "Rahul", text: "Have you fixed the login bug?" },
+    { i: 2, who: "Shubham", text: "I'm working on it now." },
+  ];
+  const result = analyze(messages, "Shubham");
+  assert.equal(result[0].tags.includes("Decision"), false);
+  assert.equal(result[1].reply, false);
+  assert.equal(result[2].tags.includes("Task"), false);
+});
+
+test("links a later commitment to the earlier task instead of creating a duplicate task", () => {
+  const messages = [
+    { i: 0, who: "Rahul", text: "Please fix the login page." },
+    { i: 1, who: "Shubham", text: "Yes, I'll finish it." },
+    { i: 2, who: "Shubham", text: "Sure, I can do it." },
+  ];
+  const result = analyze(messages, "Shubham");
+  assert.equal(result[0].tags.includes("Task"), true);
+  assert.equal(result[0].taskOwner, "Shubham");
+  assert.equal(result[0].taskForMe, true);
+  assert.equal(result[1].tags.includes("Task"), false);
+  assert.equal(result[1].taskOwner, "");
+  assert.equal(result[2].tags.includes("Task"), false);
 });
